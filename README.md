@@ -52,7 +52,7 @@
    ターミナルで以下を実行します。
 
    ```bash
-   python sfx-maker-v3.py
+   python sfx-maker.py
    ```
 
    必要なライブラリが入っていない場合は、先にインストールしてください。
