@@ -1,5 +1,7 @@
 import json
 import random
+import re
+from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -15,9 +17,13 @@ from scipy.signal import butter, lfilter
 class SFXMaker:
     def __init__(self, root):
         self.root = root
-        self.root.title("レトロ効果音メーカー v3")
-        self.root.geometry("560x760")
+        self.root.title("レトロ効果音メーカー v4")
+        self.default_geometry = "560x760"
+        self.root.geometry(self.default_geometry)
         self.root.minsize(520, 700)
+
+        self.window_state_path = self._script_dir() / "sfx-maker-window.json"
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.sample_rate = 44100
         self.current_audio = None
@@ -104,6 +110,106 @@ class SFXMaker:
 
         self._build_ui()
         self.apply_preset()
+        self.restore_window_state()
+
+    # ---------------- App window state ----------------
+    def _script_dir(self):
+        try:
+            return Path(__file__).resolve().parent
+        except NameError:
+            return Path.cwd()
+
+    def _parse_geometry(self, geometry):
+        match = re.fullmatch(r"(\d+)x(\d+)([+-]\d+)([+-]\d+)", str(geometry).strip())
+        if not match:
+            return None
+        width, height, x, y = map(int, match.groups())
+        return width, height, x, y
+
+    def _safe_geometry(self, geometry):
+        parsed = self._parse_geometry(geometry)
+        if not parsed:
+            return self.default_geometry
+
+        width, height, x, y = parsed
+        min_width, min_height = 520, 700
+        screen_width = max(800, self.root.winfo_screenwidth())
+        screen_height = max(600, self.root.winfo_screenheight())
+
+        width = max(min_width, min(width, max(min_width, screen_width * 2)))
+        height = max(min_height, min(height, max(min_height, screen_height * 2)))
+
+        # 少なくとも一部が画面内に残るようにだけ補正。
+        # マルチモニターの負座標もあり得るので、強く丸めすぎない。
+        margin = 80
+        if x > screen_width - margin:
+            x = screen_width - margin
+        if y > screen_height - margin:
+            y = screen_height - margin
+        if x + width < margin:
+            x = margin - width
+        if y + height < margin:
+            y = margin - height
+
+        return f"{int(width)}x{int(height)}{int(x):+d}{int(y):+d}"
+
+    def restore_window_state(self):
+        if not self.window_state_path.exists():
+            return
+
+        try:
+            with open(self.window_state_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return
+
+        window = data.get("window", data)
+        if not isinstance(window, dict):
+            return
+
+        geometry = window.get("geometry")
+        if geometry:
+            self.root.geometry(self._safe_geometry(geometry))
+
+        state = str(window.get("state", "normal"))
+        if state == "zoomed":
+            self.root.after(100, lambda: self._try_set_zoomed())
+
+    def _try_set_zoomed(self):
+        try:
+            self.root.state("zoomed")
+        except tk.TclError:
+            pass
+
+    def save_window_state(self):
+        try:
+            state = self.root.state()
+        except tk.TclError:
+            state = "normal"
+
+        if state == "iconic":
+            state = "normal"
+
+        data = {
+            "app": "retro_sfx_maker",
+            "version": 4,
+            "window": {
+                "geometry": self.root.geometry(),
+                "state": state,
+            },
+        }
+
+        try:
+            with open(self.window_state_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError:
+            # 終了時保存なので、保存できなくても終了を邪魔しない。
+            pass
+
+    def on_close(self):
+        self.stop_sound()
+        self.save_window_state()
+        self.root.destroy()
 
     # ---------------- UI ----------------
     def _build_ui(self):
@@ -305,7 +411,7 @@ class SFXMaker:
 
         data = {
             "app": "retro_sfx_maker",
-            "version": 3,
+            "version": 4,
             "sample_rate": self.sample_rate,
             "preset_name": self.preset_var.get(),
             "params": self.get_params(),
